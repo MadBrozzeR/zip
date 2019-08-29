@@ -1,11 +1,6 @@
 const Reader = require('mbr-buffer').Reader;
 const zlib = require('zlib');
-
-const HEADERS = {
-  LOCAL: Buffer.from([80, 75, 3, 4]),
-  CENTRAL: Buffer.from([80, 75, 1, 2]),
-  EOCD: Buffer.from([80, 75, 5, 6])
-};
+const HEADERS = require('./constants.js').HEADERS;
 
 const EXTRACTION = {
   '0': function (data, options, callback) {
@@ -58,7 +53,7 @@ ZipReader.prototype.readCD = function () {
       method: this.readUIntLE(2),
       modTime: this.readUIntLE(2),
       modDate: this.readUIntLE(2),
-      crc32: this.readUIntLE(4),
+      crc32: this.slice(4),
       compressedSize: this.readUIntLE(4),
       uncompressedSize: this.readUIntLE(4),
       nameLen: this.readUIntLE(2),
@@ -88,7 +83,7 @@ ZipReader.prototype.readLocalHeader = function () {
       method: this.readUIntLE(2),
       modTime: this.readUIntLE(2),
       modDate: this.readUIntLE(2),
-      crc32: this.readUIntLE(4),
+      crc32: this.slice(4),
       compressedSize: this.readUIntLE(4),
       uncompressedSize: this.readUIntLE(4)
     };
@@ -103,36 +98,72 @@ ZipReader.prototype.readLocalHeader = function () {
   return result;
 };
 
+function Record (cd, zip) {
+  this.header = cd;
+  this.localHeader;
+  this.data;
+  this.zip = zip;
+}
+Record.prototype.getLocalHeader = function () {
+  if (!this.localHeader) {
+    this.zip.reader.goTo(this.header.offset);
+
+    this.localHeader = this.zip.reader.readLocalHeader();
+  }
+
+  return this.localHeader;
+}
+Record.prototype.getData = function () {
+  if (!this.data) {
+    const localHeader = this.getLocalHeader();
+
+    this.zip.reader.goTo(localHeader.offset);
+    this.data = this.zip.reader.slice(localHeader.compressedSize || this.header.compressedSize);
+  }
+
+  return this.data;
+}
+Record.prototype.extract = function (callback) {
+  const data = this.getData();
+  const method = this.localHeader.method || this.header.method;
+
+  if (data) {
+    (EXTRACTION[method] || EXTRACTION[0])(data, null, callback);
+  }
+
+  return this;
+}
+
 function MBRZip (buffer) {
   this.reader = new ZipReader(buffer);
   this.eocd = this.reader.getEOCD();
-  this.cd = [];
+  this.records = [];
 
   if (this.eocd) {
     this.reader.goTo(this.eocd.CDStart);
     for (let index = 0 ; index < this.eocd.CDCount ; ++index) {
-      this.cd.push(this.reader.readCD());
+      this.records.push(new Record(this.reader.readCD(), this));
     }
   }
 }
 MBRZip.prototype.get = function (index) {
-  const cd = this.cd[index];
-
-  if (cd) {
-    this.reader.goTo(cd.offset);
-    return (this.reader.readLocalHeader());
-  }
+  return this.records[index] && this.records[index].getLocalHeader();
 };
 MBRZip.prototype.extract = function (index, callback) {
-  const header = this.get(index);
-
-  if (header) {
-    this.reader.goTo(header.offset);
-    const data = this.reader.slice(header.compressedSize);
-    (EXTRACTION[header.method] || EXTRACTION[0])(data, null, callback);
+  if (this.records[index]) {
+    this.records[index].extract(callback);
+  } else {
+    callback(new Error('Record not found. Index: ' + index + '. Total records: ' + this.records.length));
   }
 
   return this;
 };
+MBRZip.prototype.iterate = function (callback) {
+  for (let index = 0 ; index < this.records.length ; ++index) {
+    callback.call(this, this.records[index].header.name, this.records[index]);
+  }
+
+  return this;
+}
 
 module.exports = MBRZip;

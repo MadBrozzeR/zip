@@ -1,6 +1,6 @@
 {
   "name": "mbr-zip",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Simple ZIP format manipulations",
   "main": "index.js",
   "scripts": {
@@ -20,6 +20,6 @@
   },
   "homepage": "https://github.com/MadBrozzeR/zip#readme",
   "dependencies": {
-    "mbr-buffer": "0.0.1"
+    "mbr-buffer": "1.3.0"
   }
 }
